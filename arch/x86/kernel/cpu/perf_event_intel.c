@@ -1188,6 +1188,16 @@ static inline bool event_is_checkpointed(struct perf_event *event)
 {
 	return (event->hw.config & HSW_IN_TX_CHECKPOINTED) != 0;
 }
+static void intel_pmu_reset_pmc_tos(struct perf_event *event, u64 period)
+{
+	if (period <  x86_pmu.lbr_nr) {
+		/* full-recording mode: pmu skid no more than 4 records, thus 6 slots for skidding is enough */
+		wrmsrl(x86_pmu.lbr_tos, 0);
+		period =  max(x86_pmu.lbr_nr - 6, 4);
+	}
+	/* round-robin mode in default */
+	wrmsrl(MSR_IA32_PERFCTR0, ~(period  - 1));
+}
 
 static void intel_pmu_disable_event(struct perf_event *event)
 {
@@ -1208,8 +1218,18 @@ static void intel_pmu_disable_event(struct perf_event *event)
 	 * must disable before any actual event
 	 * because any event may be combined with LBR
 	 */
-	if (intel_pmu_needs_lbr_smpl(event))
+	if (intel_pmu_needs_lbr_smpl(event)) {
 		intel_pmu_lbr_disable(event);
+		if (event->attr.config == 0x20cc) {
+			/* do statistical ? */
+			if (event->hw.sample_period >= 1000)
+				rdmsrl(MSR_IA32_PERFCTR0,  current->pmc_value);
+			else {
+				intel_pmu_drain_lbr_stack(event);
+				intel_pmu_reset_pmc_tos(event, event->hw.sample_period);
+			}
+		}
+	}
 
 	if (unlikely(hwc->config_base == MSR_ARCH_PERFMON_FIXED_CTR_CTRL)) {
 		intel_pmu_disable_fixed(hwc);
@@ -1269,8 +1289,16 @@ static void intel_pmu_enable_event(struct perf_event *event)
 	 * must enabled before any actual event
 	 * because any event may be combined with LBR
 	 */
-	if (intel_pmu_needs_lbr_smpl(event))
+	if (intel_pmu_needs_lbr_smpl(event)) {
 		intel_pmu_lbr_enable(event);
+		if (event->attr.config == 0x20cc) {
+			/* do statistical ? */
+			if (event->hw.sample_period >= 1000)
+				wrmsrl(MSR_IA32_PERFCTR0,  current->pmc_value);
+			else
+				intel_pmu_reset_pmc_tos(event, event->hw.sample_period);
+		}
+	}
 
 	if (event->attr.exclude_host)
 		cpuc->intel_ctrl_guest_mask |= (1ull << hwc->idx);
@@ -1365,6 +1393,21 @@ static int intel_pmu_handle_irq(struct pt_regs *regs)
 		intel_pmu_enable_all(0);
 		return handled;
 	}
+	else if (__test_and_clear_bit(0, (unsigned long *)&status)) {
+		struct perf_event *event = cpuc->events[0];
+
+		if (event && event->attr.config == 0x20cc ) {
+			handled = intel_pmu_drain_lbr_stack(event);
+			intel_pmu_reset_pmc_tos(event, event->hw.sample_period);
+			if (!status) {
+				intel_pmu_ack_status(0);
+				intel_pmu_enable_all(0);
+				return handled;
+			}
+		}
+		if (event && event->attr.config != 0x20cc)
+			printk(KERN_INFO "%llx\n", event->attr.config );
+	}
 
 	loops = 0;
 again:
@@ -1406,6 +1449,11 @@ again:
 
 		if (!test_bit(bit, cpuc->active_mask))
 			continue;
+
+		if (event && event->attr.config == 0x20cc) {
+			printk(KERN_INFO "pmclbr escape recording, bit: %d, status: %llx \n", bit, status);
+			continue;
+		}
 
 		if (!intel_pmu_save_and_restart(event))
 			continue;

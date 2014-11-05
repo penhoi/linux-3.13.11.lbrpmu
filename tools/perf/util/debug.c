@@ -14,6 +14,7 @@
 #include "target.h"
 
 int verbose;
+//int verbose = 2;
 bool dump_trace = false, quiet = false;
 
 int eprintf(int level, const char *fmt, ...)

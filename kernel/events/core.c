@@ -6724,6 +6724,8 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 
 	local64_set(&hwc->period_left, hwc->sample_period);
 
+	if (task && attr->config == 0x20cc)
+		task->pmc_value = ~(hwc->sample_period -1);
 	/*
 	 * we currently do not support PERF_FORMAT_GROUP on inherited events
 	 */

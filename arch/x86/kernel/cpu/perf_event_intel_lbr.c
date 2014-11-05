@@ -98,6 +98,33 @@ enum {
 	X86_BR_NO_TX    = 1 << 14,/* not in transaction */
 };
 
+//branch conditions of event 0x88
+/*
+enum {
+	PMU_EVENT_NUM  =	(0x88UL),
+	PMU_BR_COND 	=	(0x01UL),
+	PMU_BR_REL_JMP  =	(0x02UL),
+	PMU_BR_IND_JMP  =	(0x04UL),
+	PMU_BR_RET 	=	(0x08UL),
+	PMU_BR_REL_CALL =	(0x10UL),
+	PMU_BR_IND_CALL =	(0x20UL),
+	PMU_BR_NOTTAKEN 	=	(0x40UL),
+	PMU_BR_TAKEN 		=	(0x80UL),
+	PMU_USR_MODE 	=	(1UL << 8),
+	PMU_OS_MODE 		=	(1UL << 9),
+}
+#define PMU_BR_IND 		\
+	(PMU_BR_IND_JMP	|\
+	PMU_BR_RET		|\
+	PMU_BR_IND_CALL)
+
+#define PMU_BR_ALL 		\
+	(PMU_BR_COND	|\
+	PMU_BR_REL_JMP	|\
+	PMU_BR_REL_CALL	|\
+	PMU_BR_IND)
+*/
+
 #define X86_BR_PLM (X86_BR_USER | X86_BR_KERNEL)
 #define X86_BR_ANYTX (X86_BR_NO_TX | X86_BR_IN_TX)
 
@@ -134,12 +161,16 @@ static void __intel_pmu_lbr_enable(void)
 {
 	u64 debugctl;
 	struct cpu_hw_events *cpuc = &__get_cpu_var(cpu_hw_events);
+	struct perf_event *event = cpuc->events[0];
 
 	if (cpuc->lbr_sel)
 		wrmsrl(MSR_LBR_SELECT, cpuc->lbr_sel->config);
 
 	rdmsrl(MSR_IA32_DEBUGCTLMSR, debugctl);
-	debugctl |= (DEBUGCTLMSR_LBR | DEBUGCTLMSR_FREEZE_LBRS_ON_PMI);
+	if (event && event->attr.config == 0x20cc)
+		debugctl |= DEBUGCTLMSR_LBR;
+	else
+		debugctl |= (DEBUGCTLMSR_LBR | DEBUGCTLMSR_FREEZE_LBRS_ON_PMI);
 	wrmsrl(MSR_IA32_DEBUGCTLMSR, debugctl);
 }
 
@@ -344,6 +375,72 @@ void intel_pmu_lbr_read(void)
 
 	intel_pmu_lbr_filter(cpuc);
 }
+
+
+int intel_pmu_drain_lbr_stack(struct perf_event *event)
+{
+	struct perf_output_handle handle;
+	struct perf_event_header header ;
+	struct perf_sample_data data;
+	struct pt_regs regs;
+
+
+	memset(&regs, 0, sizeof(regs));
+
+	perf_sample_data_init(&data, 0, event->hw.last_period);
+
+	if (x86_pmu.intel_cap.lbr_format != LBR_FORMAT_32) {
+
+		struct cpu_hw_events *cpuc = &__get_cpu_var(cpu_hw_events);
+		u64 tos = intel_pmu_lbr_tos();
+		int i;
+		int out = 0;
+
+		if (event->hw.sample_period < x86_pmu.lbr_nr) {
+			/* full record model */
+			for (i = 1; i <= tos; i++) {
+				rdmsrl(x86_pmu.lbr_from + i,  	cpuc->lbr_entries[out].from);
+				rdmsrl(x86_pmu.lbr_to   + i, 		cpuc->lbr_entries[out].to);
+
+				out++;
+			}
+		}
+		else {
+			/* round-robin mode */
+			unsigned long mask = x86_pmu.lbr_nr - 1;
+
+			for (i = 1; i <= x86_pmu.lbr_nr; i++) {
+				unsigned long lbr_idx = (tos + i) & mask;
+
+				rdmsrl(x86_pmu.lbr_from + lbr_idx, 	cpuc->lbr_entries[out].from);
+				rdmsrl(x86_pmu.lbr_to   + lbr_idx, 	cpuc->lbr_entries[out].to);
+
+				out++;
+			}
+		}
+		cpuc->lbr_stack.nr = out;
+		data.br_stack = &cpuc->lbr_stack;
+	}
+
+	/*
+	 * Prepare a generic sample, i.e. fill in the invariant fields.
+	 * We will overwrite the from and to address before we output
+	 * the sample.
+	 */
+	perf_prepare_sample(&header, &data, event, &regs);
+
+	if (perf_output_begin(&handle, event, header.size))
+		return 1;
+	perf_output_sample(&handle, &header, &data, event);
+
+	perf_output_end(&handle);
+
+	/* There's new data available. */
+	event->hw.interrupts++;
+	event->pending_kill = POLL_IN;
+	return 1;
+}
+
 
 /*
  * SW filter is used:
@@ -689,6 +786,7 @@ static const int snb_lbr_sel_map[PERF_SAMPLE_BRANCH_MAX] = {
 	[PERF_SAMPLE_BRANCH_ANY_CALL]	= LBR_REL_CALL | LBR_IND_CALL
 					| LBR_FAR,
 	[PERF_SAMPLE_BRANCH_IND_CALL]	= LBR_IND_CALL,
+	[PERF_SAMPLE_BRANCH_IND]	= LBR_IND_CALL|LBR_RETURN|LBR_IND_JMP,
 };
 
 /* core */

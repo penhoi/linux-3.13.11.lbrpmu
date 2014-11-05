@@ -55,6 +55,7 @@ enum perf_hw_id {
 	PERF_COUNT_HW_STALLED_CYCLES_FRONTEND	= 7,
 	PERF_COUNT_HW_STALLED_CYCLES_BACKEND	= 8,
 	PERF_COUNT_HW_REF_CPU_CYCLES		= 9,
+	PERF_COUNT_HW_BRANCH_INSTRUCTIONS_PMCLBR = 10,
 
 	PERF_COUNT_HW_MAX,			/* non-ABI */
 };
@@ -163,8 +164,8 @@ enum perf_branch_sample_type {
 	PERF_SAMPLE_BRANCH_ABORT_TX	= 1U << 7, /* transaction aborts */
 	PERF_SAMPLE_BRANCH_IN_TX	= 1U << 8, /* in transaction */
 	PERF_SAMPLE_BRANCH_NO_TX	= 1U << 9, /* not in transaction */
-
-	PERF_SAMPLE_BRANCH_MAX		= 1U << 10, /* non-ABI */
+	PERF_SAMPLE_BRANCH_IND		= 1u << 10,/* all indirect branch types*/
+	PERF_SAMPLE_BRANCH_MAX		= 1U << 11, /* non-ABI */
 };
 
 #define PERF_SAMPLE_BRANCH_PLM_ALL \

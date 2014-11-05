@@ -573,8 +573,22 @@ void perf_evsel__config(struct perf_evsel *evsel,
 	struct perf_event_attr *attr = &evsel->attr;
 	int track = !evsel->idx; /* only the first counter needs these */
 
+	if (attr->config == PERF_COUNT_HW_BRANCH_INSTRUCTIONS_PMCLBR) {
+		//opts->sample_address = FALSE;
+		opts->period = FALSE;
+		if (opts->user_interval  == ULLONG_MAX) {
+			attr->freq	= 0;
+			attr->sample_period = 16;
+		}
+		if (!opts->branch_stack)
+			opts->branch_stack = PERF_SAMPLE_BRANCH_IND;
+	}
+
+
 	attr->sample_id_all = perf_missing_features.sample_id_all ? 0 : 1;
 	attr->inherit	    = !opts->no_inherit;
+
+
 
 	perf_evsel__set_sample_bit(evsel, IP);
 	perf_evsel__set_sample_bit(evsel, TID);
@@ -698,6 +712,16 @@ void perf_evsel__config(struct perf_evsel *evsel,
 	 */
 	if (target__none(&opts->target) && perf_evsel__is_group_leader(evsel))
 		attr->enable_on_exec = 1;
+
+	if (attr->config == PERF_COUNT_HW_BRANCH_INSTRUCTIONS_PMCLBR )
+	{
+		attr->type = PERF_TYPE_RAW;
+		attr->config= 0x20cc;
+		/* No more data are put after BRANCH_STACK data; no ip and addr sample data */
+		//attr->sample_type &=  (~PERF_SAMPLE_IP) & ((PERF_SAMPLE_BRANCH_STACK << 1) - 1);
+		attr->sample_type &=  (PERF_SAMPLE_BRANCH_STACK << 1) - 1;
+	}
+
 }
 
 int perf_evsel__alloc_fd(struct perf_evsel *evsel, int ncpus, int nthreads)

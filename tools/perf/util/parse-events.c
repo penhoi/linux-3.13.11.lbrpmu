@@ -70,6 +70,10 @@ static struct event_symbol event_symbols_hw[PERF_COUNT_HW_MAX] = {
 		.symbol = "ref-cycles",
 		.alias  = "",
 	},
+	[PERF_COUNT_HW_BRANCH_INSTRUCTIONS_PMCLBR] = {
+		.symbol = "branch-instructions-pmclbr",
+		.alias  = "pmclbr",
+	},
 };
 
 static struct event_symbol event_symbols_sw[PERF_COUNT_SW_MAX] = {

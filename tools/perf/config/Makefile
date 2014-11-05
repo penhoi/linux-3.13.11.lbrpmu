@@ -80,11 +80,13 @@ ifeq ($(DEBUG),0)
   CFLAGS += -O6
 endif
 
+#define PARSER_DEBUG
 ifdef PARSER_DEBUG
   PARSER_DEBUG_BISON := -t
   PARSER_DEBUG_FLEX  := -d
   CFLAGS             += -DPARSER_DEBUG
 endif
+#endef
 
 CFLAGS += -fno-omit-frame-pointer
 CFLAGS += -ggdb3
