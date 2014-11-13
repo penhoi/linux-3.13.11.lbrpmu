@@ -574,21 +574,34 @@ void perf_evsel__config(struct perf_evsel *evsel,
 	int track = !evsel->idx; /* only the first counter needs these */
 
 	if (attr->config == PERF_COUNT_HW_BRANCH_INSTRUCTIONS_PMCLBR) {
-		//opts->sample_address = FALSE;
-		opts->period = FALSE;
+		attr->type = PERF_TYPE_RAW;
+		attr->config= 0x20cc;
+
+		/* reconfigure opts for this event,  refers to perf_record_opts__config_freq */
+		/* period */
 		if (opts->user_interval  == ULLONG_MAX) {
-			attr->freq	= 0;
-			attr->sample_period = 16;
+			opts->default_interval = opts->user_interval  = 16;
+			opts->freq = 0;
 		}
+		/* no samples, make sure attr->sample_period not be overwritten */
+		opts->no_samples = 0;
+		/* set branch type */
 		if (!opts->branch_stack)
 			opts->branch_stack = PERF_SAMPLE_BRANCH_IND;
-	}
 
+		/* reconfigure event modifiers, refers to  parse_events__modifier_event*/
+		attr->exclude_user   = 0;
+		attr->exclude_kernel = 1;
+		attr->exclude_hv     = 1;
+		attr->precise_ip     = 0;
+		/*attr->exclude_host   = ?;
+		attr->exclude_guest  = ?;
+		evsel->exclude_GH          = ?;
+		evsel->sample_read         = 0; */
+	}
 
 	attr->sample_id_all = perf_missing_features.sample_id_all ? 0 : 1;
 	attr->inherit	    = !opts->no_inherit;
-
-
 
 	perf_evsel__set_sample_bit(evsel, IP);
 	perf_evsel__set_sample_bit(evsel, TID);
@@ -712,15 +725,6 @@ void perf_evsel__config(struct perf_evsel *evsel,
 	 */
 	if (target__none(&opts->target) && perf_evsel__is_group_leader(evsel))
 		attr->enable_on_exec = 1;
-
-	if (attr->config == PERF_COUNT_HW_BRANCH_INSTRUCTIONS_PMCLBR )
-	{
-		attr->type = PERF_TYPE_RAW;
-		attr->config= 0x20cc;
-		/* No more data are put after BRANCH_STACK data; no ip and addr sample data */
-		//attr->sample_type &=  (~PERF_SAMPLE_IP) & ((PERF_SAMPLE_BRANCH_STACK << 1) - 1);
-		attr->sample_type &=  (PERF_SAMPLE_BRANCH_STACK << 1) - 1;
-	}
 
 }
 
