@@ -239,6 +239,18 @@ enum perf_event_read_format {
 #define PERF_ATTR_SIZE_VER3	96	/* add: sample_regs_user */
 					/* add: sample_stack_user */
 
+typedef struct cfg_infoheader {
+	char flag[4];
+	unsigned long baseaddr;
+	unsigned long srcbmpoft; 
+	unsigned long hashmapoft;  
+}cfg_infoheader;			/* pointed by attr->__reserved_2 */
+//unsigned long base_addr;		/* pointed by attr->sample_stack_user */
+//unsigned long cfg_srcbmp;		/* pointed by attr->config1 */
+//unsigned long cfg_hashmap;	/* pointed by attr->config2 */
+
+
+
 /*
  * Hardware event_id to monitor via a performance monitoring event:
  */

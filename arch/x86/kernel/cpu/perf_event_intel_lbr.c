@@ -376,6 +376,55 @@ void intel_pmu_lbr_read(void)
 	intel_pmu_lbr_filter(cpuc);
 }
 
+#define CFG_HASH_MAP_SIZE 0x400
+typedef struct cfg_hashmap_ele {
+	u16 oft;
+	u8 ndst;
+ 	u8 attr;
+}cfg_hashmap_ele;
+
+
+enum CFG_ATTR_TYPE{
+	CFG_ATTR_NOEXIST = 0,
+	CFG_ATTR_RET = 1,
+	CFG_ATTR_JMP = 2,
+	CFG_ATTR_CALL = 4,
+	CFG_ATTR_EXIST = CFG_ATTR_RET | CFG_ATTR_JMP | CFG_ATTR_CALL,
+	CFG_ATTR_STRICT = 8, /* strict or partial */
+};
+
+int check_control_flow_transfer(struct perf_event_attr *attr, unsigned long from, unsigned long to)
+{
+	unsigned long cfg_hashmap = attr->config2;
+	unsigned long cfg_srcbmp = attr->config1;
+	unsigned long lowfrom = from & (CFG_HASH_MAP_SIZE-1), lowto = to & 0xFFFF;
+	unsigned long bitoft, *uloft;
+	u16 *toarray;
+	struct cfg_hashmap_ele *ele;
+
+	bitoft = from & 0x1F;
+	uloft = (unsigned long*)(cfg_srcbmp + ((from >> 5) << 2));
+	//printk(KERN_INFO "%lx, %lu\n", *uloft, bitoft);
+	//check source bitmap
+	if (test_bit(bitoft, uloft)) {
+		//check hash table
+		ele = &((struct cfg_hashmap_ele *)cfg_hashmap)[lowfrom];
+		if (!(ele->attr & CFG_ATTR_EXIST))
+			return 0;
+		if (ele->attr & CFG_ATTR_STRICT) {
+			if (ele->ndst) {
+				toarray = (u16*)(cfg_hashmap + ele->oft);
+				if (lowto == (lowto | toarray[lowto % ele->ndst]))
+					return 1;
+			}
+			return 0;
+		}
+		else {
+			return 1;
+		}
+	}
+	return 0;
+}
 
 int intel_pmu_drain_lbr_stack(struct perf_event *event)
 {
@@ -383,11 +432,35 @@ int intel_pmu_drain_lbr_stack(struct perf_event *event)
 	struct perf_event_header header ;
 	struct perf_sample_data data;
 	struct pt_regs regs;
+	struct perf_event_attr *attr = &event->attr;
 
+	if (event->attr.__reserved_2) {
+		/* round-robin mode */
+		u64 tos = intel_pmu_lbr_tos();
+		unsigned long mask = x86_pmu.lbr_nr - 1;
+		unsigned long from, to;
+		int flag, i;
+
+		for (i = 1; i <= x86_pmu.lbr_nr; i++) {
+			unsigned long lbr_idx = (tos + i) & mask;
+		
+			rdmsrl(x86_pmu.lbr_from + lbr_idx,	from);
+			if ((from > attr->sample_stack_user) && ((from & 0xFF000000)== 0x08000000) ){
+				rdmsrl(x86_pmu.lbr_to	+ lbr_idx,	 to);
+				flag = check_control_flow_transfer(attr, from-attr->sample_stack_user, to);
+				/*if (flag)
+					printk("find: %lx -> %lx\n", from, to);
+				else
+					printk("not find: %lx -> %lx\n", from, to);*/
+			}
+		}
+		return 1;
+	}
 
 	memset(&regs, 0, sizeof(regs));
 
 	perf_sample_data_init(&data, 0, event->hw.last_period);
+
 
 	if (x86_pmu.intel_cap.lbr_format != LBR_FORMAT_32) {
 

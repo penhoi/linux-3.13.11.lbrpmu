@@ -6823,6 +6823,13 @@ static int perf_copy_attr(struct perf_event_attr __user *uattr,
 	if (attr->__reserved_1)
 		return -EINVAL;
 
+	if (attr->__reserved_2) {
+		struct cfg_infoheader* cfginfo = (struct cfg_infoheader *) attr->__reserved_2;
+		attr->sample_stack_user = cfginfo->baseaddr;
+		attr->config1 = cfginfo->srcbmpoft + attr->__reserved_2;
+		attr->config2 = cfginfo->hashmapoft+ attr->__reserved_2;
+	}
+	
 	if (attr->sample_type & ~(PERF_SAMPLE_MAX-1))
 		return -EINVAL;
 

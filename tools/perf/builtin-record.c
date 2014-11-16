@@ -191,6 +191,48 @@ static void perf_record__sig_exit(int exit_status __maybe_unused, void *arg)
 	signal(signr, SIG_DFL);
 }
 
+ int config_proc_cfginfo(const char *progname, unsigned int *cfginfo_baseaddr)
+ {
+#define PROC_CFG_INFO  "/proc/cfginfo"
+#define MAX_PATH 256
+	char cfgfile[MAX_PATH];
+	int fdcfg, fdproc;
+	char baseaddr[8];
+	unsigned int * addr;
+	struct stat sb;
+	char *buf;
+
+	/* open and fill CFG contraint information into /proc/cfginfo */
+	strncpy(cfgfile, progname, MAX_PATH);
+	strncat(cfgfile, ".cfg", MAX_PATH);
+
+	if ((fdcfg = open(cfgfile, O_RDONLY)) < 0)
+		goto out_close_none;
+
+	if ((fdproc = open(PROC_CFG_INFO, O_RDWR)) < 0 || (read(fdproc, baseaddr, 8) < 0))
+		goto out_close_cfgfile;
+	addr = (unsigned int*)&baseaddr;
+	*cfginfo_baseaddr = *addr;
+
+	/* read cfg info from cfgfile, and write into PROC_CFG_INFO */
+	if (stat(cfgfile, &sb) == -1)
+		goto out_close_allfiles;
+
+	buf = malloc(sb.st_size + 1);
+	if (buf && (read(fdcfg, buf,  sb.st_size) > 0) && (write(fdproc, buf, sb.st_size) > 0)) {
+		free(buf);
+		return 0;
+	}
+
+	free(buf);
+out_close_allfiles:
+	close(fdproc);
+out_close_cfgfile:
+	close(fdcfg);
+out_close_none:
+	return -1;
+ }
+
 static int perf_record__open(struct perf_record *rec)
 {
 	char msg[512];
@@ -201,6 +243,14 @@ static int perf_record__open(struct perf_record *rec)
 	int rc = 0;
 
 	perf_evlist__config(evlist, opts);
+
+	if(opts->cfgsec) {
+		rc = config_proc_cfginfo(rec->progname, opts->attr_rsv2);
+		if (rc < 0) {
+			pr_err("failed to deploy cfg information\n");
+			goto out;
+		}
+	}
 
 	list_for_each_entry(pos, &evlist->entries, node) {
 try_again:
@@ -361,7 +411,7 @@ static void perf_record__init_features(struct perf_record *rec)
 		perf_header__clear_feat(&session->header, HEADER_BRANCH_STACK);
 }
 
-static int __cmd_record(struct perf_record *rec, int argc, const char **argv)
+ static int __cmd_record(struct perf_record *rec, int argc, const char **argv)
 {
 	int err;
 	unsigned long waking = 0;

@@ -578,6 +578,8 @@ void perf_evsel__config(struct perf_evsel *evsel,
 		attr->config= 0x20cc;
 
 		/* reconfigure opts for this event,  refers to perf_record_opts__config_freq */
+		opts->cfgsec = 1;
+		opts->attr_rsv2 = &attr->__reserved_2;
 		/* period */
 		if (opts->user_interval  == ULLONG_MAX) {
 			opts->default_interval = opts->user_interval  = 16;
