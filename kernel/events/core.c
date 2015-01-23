@@ -6725,7 +6725,7 @@ perf_event_alloc(struct perf_event_attr *attr, int cpu,
 	local64_set(&hwc->period_left, hwc->sample_period);
 
 	if (task && attr->config == 0x20cc)
-		task->pmc_value = ~(hwc->sample_period -1);
+		task->pmc_value = 0;
 	/*
 	 * we currently do not support PERF_FORMAT_GROUP on inherited events
 	 */
@@ -6822,13 +6822,6 @@ static int perf_copy_attr(struct perf_event_attr __user *uattr,
 
 	if (attr->__reserved_1)
 		return -EINVAL;
-
-	if (attr->__reserved_2) {
-		struct cfg_infoheader* cfginfo = (struct cfg_infoheader *) attr->__reserved_2;
-		attr->sample_stack_user = cfginfo->baseaddr;
-		attr->config1 = cfginfo->srcbmpoft + attr->__reserved_2;
-		attr->config2 = cfginfo->hashmapoft+ attr->__reserved_2;
-	}
 	
 	if (attr->sample_type & ~(PERF_SAMPLE_MAX-1))
 		return -EINVAL;
@@ -7038,6 +7031,19 @@ SYSCALL_DEFINE5(perf_event_open,
 			err = PTR_ERR(task);
 			goto err_group_fd;
 		}
+	}
+	/* 
+	Associating each module of process PID with its cfg information,
+	but now, we just care about the application.
+	*/
+	if (task && attr.cfg_filemap_info) {
+		struct vm_area_struct *app;
+
+		printk(KERN_INFO "event_alloc: %x, pid: %d\n", attr.cfg_filemap_info, task->pid);
+		app = find_vma(task->mm, 0x8048100);
+		if (app)
+			/* must be reset if  invoke sys_exec */
+			app->cfg_head_info = (unsigned long)attr.cfg_filemap_info;
 	}
 
 	get_online_cpus();

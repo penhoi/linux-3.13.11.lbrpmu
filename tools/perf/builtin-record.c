@@ -197,8 +197,7 @@ static void perf_record__sig_exit(int exit_status __maybe_unused, void *arg)
 #define MAX_PATH 256
 	char cfgfile[MAX_PATH];
 	int fdcfg, fdproc;
-	char baseaddr[8];
-	unsigned int * addr;
+	unsigned int baseaddr;
 	struct stat sb;
 	char *buf;
 
@@ -209,10 +208,11 @@ static void perf_record__sig_exit(int exit_status __maybe_unused, void *arg)
 	if ((fdcfg = open(cfgfile, O_RDONLY)) < 0)
 		goto out_close_none;
 
-	if ((fdproc = open(PROC_CFG_INFO, O_RDWR)) < 0 || (read(fdproc, baseaddr, 8) < 0))
+	if ((fdproc = open(PROC_CFG_INFO, O_RDWR)) < 0 || (read(fdproc, &baseaddr, sizeof(unsigned int)) < 0))
 		goto out_close_cfgfile;
-	addr = (unsigned int*)&baseaddr;
-	*cfginfo_baseaddr = *addr;
+	printf("baseaddr: %x\n", baseaddr);
+	*cfginfo_baseaddr = baseaddr;
+	//*cfginfo_baseaddr = 0;
 
 	/* read cfg info from cfgfile, and write into PROC_CFG_INFO */
 	if (stat(cfgfile, &sb) == -1)
@@ -245,11 +245,17 @@ static int perf_record__open(struct perf_record *rec)
 	perf_evlist__config(evlist, opts);
 
 	if(opts->cfgsec) {
-		rc = config_proc_cfginfo(rec->progname, opts->attr_rsv2);
-		if (rc < 0) {
-			pr_err("failed to deploy cfg information\n");
-			goto out;
+		/* no need to load cfg file for sampling */
+		if (opts->default_interval > 16)
+			*(opts->attr_rsv2) = 0;
+		else {
+			rc = config_proc_cfginfo(rec->progname, opts->attr_rsv2);
+			if (rc < 0) {
+				pr_err("failed to deploy cfg information\n");
+				goto out;
+			}
 		}
+		printf("cfgfile: %x\n", *opts->attr_rsv2);
 	}
 
 	list_for_each_entry(pos, &evlist->entries, node) {

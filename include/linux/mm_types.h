@@ -307,6 +307,7 @@ struct vm_area_struct {
 #ifdef CONFIG_NUMA
 	struct mempolicy *vm_policy;	/* NUMA policy for the VMA */
 #endif
+	unsigned long cfg_head_info;
 };
 
 struct core_thread {

@@ -1225,7 +1225,7 @@ static void intel_pmu_disable_event(struct perf_event *event)
 			if (event->hw.sample_period >= 1000)
 				rdmsrl(MSR_IA32_PERFCTR0,  current->pmc_value);
 			else {
-				intel_pmu_drain_lbr_stack(event);
+				//intel_pmu_drain_lbr_stack(event);
 				intel_pmu_reset_pmc_tos(event, event->hw.sample_period);
 			}
 		}

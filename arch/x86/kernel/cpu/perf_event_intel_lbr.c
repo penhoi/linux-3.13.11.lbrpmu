@@ -376,82 +376,144 @@ void intel_pmu_lbr_read(void)
 	intel_pmu_lbr_filter(cpuc);
 }
 
-#define CFG_HASH_MAP_SIZE 0x400
-typedef struct cfg_hashmap_ele {
-	u16 oft;
-	u8 ndst;
- 	u8 attr;
-}cfg_hashmap_ele;
+/* data structures and functions for enforceing CFI */
+struct cfg_head_info{
+	unsigned long vaImageBase;
+	unsigned long cfg_srcbmp;
+	unsigned long cfg_edge_hashmap;
+	unsigned long nPrime;	
+	unsigned long cfg_eptbmp;
+}cfg_head_info;
 
+typedef struct cfg_edge_hashmap {
+	unsigned long lFrm;
+	unsigned long tDst;
+	unsigned long lNxt;
+}cfg_edge_hashmap;
 
-enum CFG_ATTR_TYPE{
-	CFG_ATTR_NOEXIST = 0,
-	CFG_ATTR_RET = 1,
-	CFG_ATTR_JMP = 2,
-	CFG_ATTR_CALL = 4,
-	CFG_ATTR_EXIST = CFG_ATTR_RET | CFG_ATTR_JMP | CFG_ATTR_CALL,
-	CFG_ATTR_STRICT = 8, /* strict or partial */
-};
+typedef struct cfg_dst{
+	u16	nSize;
+	u8	cFlag;
+	u8	cInstType;
+	unsigned long arDst[1];
+}cfg_dst;
 
-int check_control_flow_transfer(struct perf_event_attr *attr, unsigned long from, unsigned long to)
+/* check integrity of source address */
+inline int cfi_check_source(unsigned long cfg_srcbmp, unsigned long from)
 {
-	unsigned long cfg_hashmap = attr->config2;
-	unsigned long cfg_srcbmp = attr->config1;
-	unsigned long lowfrom = from & (CFG_HASH_MAP_SIZE-1), lowto = to & 0xFFFF;
-	unsigned long bitoft, *uloft;
-	u16 *toarray;
-	struct cfg_hashmap_ele *ele;
+	unsigned long oftBit, *oftDwrd;
+	
+	oftDwrd = (unsigned long*)(cfg_srcbmp + ((from >> 5) << 2));
+	oftBit = from & 0x1F;
 
-	bitoft = from & 0x1F;
-	uloft = (unsigned long*)(cfg_srcbmp + ((from >> 5) << 2));
-	//printk(KERN_INFO "%lx, %lu\n", *uloft, bitoft);
 	//check source bitmap
-	if (test_bit(bitoft, uloft)) {
-		//check hash table
-		ele = &((struct cfg_hashmap_ele *)cfg_hashmap)[lowfrom];
-		if (!(ele->attr & CFG_ATTR_EXIST))
-			return 0;
-		if (ele->attr & CFG_ATTR_STRICT) {
-			if (ele->ndst) {
-				toarray = (u16*)(cfg_hashmap + ele->oft);
-				if (lowto == (lowto | toarray[lowto % ele->ndst]))
-					return 1;
-			}
-			return 0;
-		}
-		else {
-			return 1;
-		}
-	}
-	return 0;
+	return test_bit(oftBit, oftDwrd);
 }
 
+/* check integrity of source address */
+inline int cfi_check_destination(struct cfg_dst * tDst, unsigned long lTo)
+{
+	unsigned long lMask = tDst->arDst[lTo % tDst->nSize];
+
+	return ((lTo & lMask) == lTo);
+}
+
+/* check integrity of entry-point */
+inline int cfi_check_entry(unsigned long cfg_entrybmp, unsigned long to)
+{
+	return cfi_check_source(cfg_entrybmp, to);
+}
+
+/* get destination addresses a give source address */
+struct cfg_dst* cfi_check_edge(struct cfg_edge_hashmap *edgeto, unsigned long nPrime, unsigned long lFrm)
+{
+	unsigned long nIdx = lFrm % nPrime;
+
+	while (edgeto[nIdx].lFrm != lFrm) {
+		nIdx = edgeto[nIdx].lNxt;
+		if (nIdx == 0) {
+			printk("Corrputed cfg file\n");
+			return NULL;
+		}
+	}
+	return (struct cfg_dst*)((char*)edgeto + edgeto[nIdx].tDst);
+}
+
+/* check integrity of edge */
+int check_control_flow_transfer(struct cfg_head_info* hdrFrm, struct cfg_head_info *hdrTo, unsigned long lFrm, unsigned long lTo)
+{
+	struct cfg_dst *tDst;
+
+	if (!cfi_check_source(hdrFrm->cfg_srcbmp, lFrm))
+		return false;
+
+	tDst = cfi_check_edge((struct cfg_edge_hashmap*)hdrFrm->cfg_edge_hashmap, hdrFrm->nPrime, lFrm);
+	if (tDst == NULL)
+		return false;
+
+	if ((hdrFrm != hdrTo) && (tDst->cFlag)) {
+		if (hdrTo != NULL)	
+			return cfi_check_destination(tDst, lTo);
+		else 
+			return true;
+	}
+	else {
+		return cfi_check_destination(tDst, lTo);
+	}
+}
+
+	
 int intel_pmu_drain_lbr_stack(struct perf_event *event)
 {
 	struct perf_output_handle handle;
 	struct perf_event_header header ;
 	struct perf_sample_data data;
 	struct pt_regs regs;
-	struct perf_event_attr *attr = &event->attr;
 
-	if (event->attr.__reserved_2) {
+	if (event->attr.cfg_filemap_info) {
 		/* round-robin mode */
 		u64 tos = intel_pmu_lbr_tos();
 		unsigned long mask = x86_pmu.lbr_nr - 1;
 		unsigned long from, to;
 		int flag, i;
 
+		/* make sure in the context of an application if we enforcing CFI*/
+		if (current->mm == NULL) 
+			return 1;
+			
 		for (i = 1; i <= x86_pmu.lbr_nr; i++) {
+			struct vm_area_struct *tVmaFrm, tVmaTo;
+			struct cfg_head_info* tHdrFrm, *tHdrTo;
 			unsigned long lbr_idx = (tos + i) & mask;
-		
+
 			rdmsrl(x86_pmu.lbr_from + lbr_idx,	from);
-			if ((from > attr->sample_stack_user) && ((from & 0xFF000000)== 0x08000000) ){
-				rdmsrl(x86_pmu.lbr_to	+ lbr_idx,	 to);
-				flag = check_control_flow_transfer(attr, from-attr->sample_stack_user, to);
-				/*if (flag)
+			rdmsrl(x86_pmu.lbr_to	+ lbr_idx,	 to);
+		
+			printk(KERN_INFO "from %lx to %lx\n", from, to);
+			/* make sure have valid records */
+			if (from == 0 || to == 0)
+				continue;
+			
+			tVmaFrm = find_vma(current->mm, from);		
+			if (!tVmaFrm)
+				continue;
+
+			//fixme: need modification if current process invokes sys_exec
+			//tHdrFrm = (struct cfg_head_info*)tVmaFrm->cfg_head_info;		
+			tHdrFrm = (struct cfg_head_info*)event->attr.cfg_filemap_info;
+			if (tHdrFrm->vaImageBase == tVmaFrm->vm_start) {
+				from -= tVmaFrm->vm_start;
+				if ((to > tVmaFrm->vm_start) && (to < tVmaFrm->vm_end))
+					tHdrTo = tHdrFrm, to -= tVmaFrm->vm_start;
+				else
+					/*tVmaFrm = find_vma(current->mm, from);*/
+					tHdrTo = NULL, to = 0;
+				
+				flag = check_control_flow_transfer(tHdrFrm,  tHdrTo, from, to);
+				if (flag)
 					printk("find: %lx -> %lx\n", from, to);
 				else
-					printk("not find: %lx -> %lx\n", from, to);*/
+					printk("not find: %lx -> %lx\n", from, to);
 			}
 		}
 		return 1;
