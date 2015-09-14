@@ -639,6 +639,8 @@ static const struct branch_mode branch_modes[] = {
 	BRANCH_OPT("abort_tx", PERF_SAMPLE_BRANCH_ABORT_TX),
 	BRANCH_OPT("in_tx", PERF_SAMPLE_BRANCH_IN_TX),
 	BRANCH_OPT("no_tx", PERF_SAMPLE_BRANCH_NO_TX),
+	BRANCH_OPT("ind_all", PERF_SAMPLE_BRANCH_IND),
+	BRANCH_OPT("ind_fwd", PERF_SAMPLE_BRANCH_IND_FWD),
 	BRANCH_END
 };
 

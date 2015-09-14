@@ -1386,29 +1386,26 @@ static int intel_pmu_handle_irq(struct pt_regs *regs)
 	 */
 	if (!x86_pmu.late_ack)
 		apic_write(APIC_LVTPC, APIC_DM_NMI);
+	
+	status = intel_pmu_get_status();
+	if (test_bit(0, (unsigned long *)&status)) {
+		   struct perf_event *event = cpuc->events[0];
+	
+		   if (event && event->attr.config == 0x20cc ) {
+			   handled = intel_pmu_drain_lbr_stack(event);
+			   intel_pmu_reset_pmc_tos(event, event->hw.sample_period);
+			   intel_pmu_ack_status(0);
+			   return handled;
+		   }
+	}
+
 	intel_pmu_disable_all();
 	handled = intel_pmu_drain_bts_buffer();
-	status = intel_pmu_get_status();
 	if (!status) {
 		intel_pmu_enable_all(0);
 		return handled;
 	}
-	else if (__test_and_clear_bit(0, (unsigned long *)&status)) {
-		struct perf_event *event = cpuc->events[0];
-
-		if (event && event->attr.config == 0x20cc ) {
-			handled = intel_pmu_drain_lbr_stack(event);
-			intel_pmu_reset_pmc_tos(event, event->hw.sample_period);
-			if (!status) {
-				intel_pmu_ack_status(0);
-				intel_pmu_enable_all(0);
-				return handled;
-			}
-		}
-		if (event && event->attr.config != 0x20cc)
-			printk(KERN_INFO "%llx\n", event->attr.config );
-	}
-
+	
 	loops = 0;
 again:
 	intel_pmu_ack_status(status);
@@ -1449,11 +1446,6 @@ again:
 
 		if (!test_bit(bit, cpuc->active_mask))
 			continue;
-
-		if (event && event->attr.config == 0x20cc) {
-			printk(KERN_INFO "pmclbr escape recording, bit: %d, status: %llx \n", bit, status);
-			continue;
-		}
 
 		if (!intel_pmu_save_and_restart(event))
 			continue;

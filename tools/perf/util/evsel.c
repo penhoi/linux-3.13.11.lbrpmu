@@ -588,9 +588,12 @@ void perf_evsel__config(struct perf_evsel *evsel,
 		/* no samples, make sure attr->sample_period not be overwritten */
 		opts->no_samples = 0;
 		/* set branch type */
-		if (!opts->branch_stack)
-			opts->branch_stack = PERF_SAMPLE_BRANCH_IND;
-
+		if (!opts->branch_stack) {
+			if (opts->user_interval == 10)
+				opts->branch_stack = PERF_SAMPLE_BRANCH_IND;
+			else
+				opts->branch_stack = PERF_SAMPLE_BRANCH_IND_FWD;
+		}
 		/* reconfigure event modifiers, refers to  parse_events__modifier_event*/
 		attr->exclude_user   = 0;
 		attr->exclude_kernel = 1;

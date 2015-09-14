@@ -7042,7 +7042,7 @@ SYSCALL_DEFINE5(perf_event_open,
 		printk(KERN_INFO "event_alloc: %x, pid: %d\n", attr.cfg_filemap_info, task->pid);
 		app = find_vma(task->mm, 0x8048100);
 		if (app)
-			/* must be reset if  invoke sys_exec */
+			/* must be reset if app invoke sys_exec */
 			app->cfg_head_info = (unsigned long)attr.cfg_filemap_info;
 	}
 

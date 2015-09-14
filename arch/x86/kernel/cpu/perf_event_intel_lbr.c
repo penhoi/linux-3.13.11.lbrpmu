@@ -442,6 +442,8 @@ struct cfg_dst* cfi_check_edge(struct cfg_edge_hashmap *edgeto, unsigned long nP
 /* check integrity of edge */
 int check_control_flow_transfer(struct cfg_head_info* hdrFrm, struct cfg_head_info *hdrTo, unsigned long lFrm, unsigned long lTo)
 {
+	return (int)(lFrm + lTo);
+	/*
 	struct cfg_dst *tDst;
 
 	if (!cfi_check_source(hdrFrm->cfg_srcbmp, lFrm))
@@ -459,10 +461,100 @@ int check_control_flow_transfer(struct cfg_head_info* hdrFrm, struct cfg_head_in
 	}
 	else {
 		return cfi_check_destination(tDst, lTo);
-	}
+	}*/
 }
 
+typedef unsigned long ulong;
+
+/* data structures and functions for enforceing CFI */
+typedef struct cfg_info_header{
+	unsigned long branch_from_bmp;
+	unsigned long conn_hashmap;
+	unsigned long conn_hashPrime;	
+	unsigned long entrypoint_bmp;
+}cfg_info_header;
+
+typedef struct cfg_target_table{
+	u16	num_ele; 
+	u8	flag;
+	u8	inst_type;
+	unsigned long branch_tos[1];
+}cfg_target_table;
+
+int check_intra_module_transfer(unsigned long jump_from, unsigned long jump_to, struct vm_area_struct
+	*from_vma)
+{
+	cfg_info_header *hdr = (struct cfg_info_header*)from_vma->cfg_info;
+	unsigned long from = jump_from - from_vma->vm_start;
+	unsigned long to = jump_to - from_vma->vm_start; 
+	struct cfg_target_table *tbl;
+
+	if (!check_branch_from(hdr->branch_from_bmp, from))
+		return 0;
+	tbl =  get_target_table(hdr->conn_hashmap, hdr->conn_hashPrime, from);
+	if (tbl == NULL)
+		return 0;
 	
+	return check_branch_to(tbl, to);	
+}
+
+
+void check_inter_module_transfer(unsigned long jump_from, unsigned long jump_to, struct vm_area_struct* from_vma, struct vm_area_struct* to_vma)
+{	
+	cfg_info_header *hdr = (struct cfg_info_header*)from_vma->cfg_info;
+	unsigned long from = jump_from - from_vma->vm_start;
+	unsigned long to = jump_to - to_vma->vm_start; 
+	struct cfg_target_table *tbl;
+
+	if (!check_branch_from(hdr->branch_from_bmp, from))
+		return 0;
+	tbl =  get_target_table(hdr->conn_hashmap, hdr->conn_hashPrime, from);
+	if (tbl == NULL || !tbl->flag)
+		return 0;
+	
+	return check_entrypoint(tbl, to);	
+}
+
+int check_transfers(void)
+{
+	struct vm_area_struct *from_vma, to_vma;
+	unsigned long jump_from, jump_to;
+	int lbr_idx, flag = 0;
+
+	for (lbr_idx = 0; lbr_idx < x86_pmu.lbr_nr; lbr_idx++) {
+
+		/* get jump-from address */
+		rdmsrl(x86_pmu.lbr_from + lbr_idx, jump_from);
+		if (jump_from == 0) 
+			continue;
+		from_vma = find_vma(current->mm, jump_from);		
+		if (!from_vma)
+			continue;
+
+		/* get jump-to address */		
+		rdmsrl(x86_pmu.lbr_to	+ lbr_idx,	 jump_to);
+		if (jump_to == 0) 
+			continue;
+		to_vma = find_vma(current->mm, jump_to);		
+		if (!to_vma)
+			continue;
+
+		/* do validataion */
+		if (from_vma  == to_vma)
+			flag = check_intra_module_transfer(jump_from, jump_to, from_vma);
+		else
+			flag = check_inter_module_transfer(jump_from, jump_to, from_vma, to_vma);			
+		if (flag == 0) {
+			raise_error();
+			break;
+		}
+	}
+	return flag;
+}
+	
+
+
+}
 int intel_pmu_drain_lbr_stack(struct perf_event *event)
 {
 	struct perf_output_handle handle;
@@ -489,7 +581,7 @@ int intel_pmu_drain_lbr_stack(struct perf_event *event)
 			rdmsrl(x86_pmu.lbr_from + lbr_idx,	from);
 			rdmsrl(x86_pmu.lbr_to	+ lbr_idx,	 to);
 		
-			printk(KERN_INFO "from %lx to %lx\n", from, to);
+			//printk(KERN_INFO "from %lx to %lx\n", from, to);
 			/* make sure have valid records */
 			if (from == 0 || to == 0)
 				continue;
@@ -510,10 +602,8 @@ int intel_pmu_drain_lbr_stack(struct perf_event *event)
 					tHdrTo = NULL, to = 0;
 				
 				flag = check_control_flow_transfer(tHdrFrm,  tHdrTo, from, to);
-				if (flag)
-					printk("find: %lx -> %lx\n", from, to);
-				else
-					printk("not find: %lx -> %lx\n", from, to);
+				//if (!flag)
+				//	send_sig(SIGTERM,  current, 0);
 			}
 		}
 		return 1;
@@ -922,6 +1012,7 @@ static const int snb_lbr_sel_map[PERF_SAMPLE_BRANCH_MAX] = {
 					| LBR_FAR,
 	[PERF_SAMPLE_BRANCH_IND_CALL]	= LBR_IND_CALL,
 	[PERF_SAMPLE_BRANCH_IND]	= LBR_IND_CALL|LBR_RETURN|LBR_IND_JMP,
+	[PERF_SAMPLE_BRANCH_IND_FWD]	= LBR_IND_CALL|LBR_IND_JMP,
 };
 
 /* core */
